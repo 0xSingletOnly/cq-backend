@@ -16,7 +16,7 @@ This project provides a FastAPI backend service for a spreadsheet-like UI. It al
 -   **Endpoint**: `/llm-complete`
 -   **Method**: `POST`
 -   **Request Body**: See `LLMCompletionRequest` in `main.py` or the example below.
--   **Response Body**: See `LLMCompletionResponse` in `main.py` or the example below.
+-   **Response Body**: See `FrontendLLMResponse` in `main.py`. This model defines the structure of the JSON response, which includes `status` (string: "success" or "error"), `new_column_name` (string: the name of the new column, potentially title-cased e.g., "Engineering Classification"), `column_values` (array: the generated values for the new column, matching input row order), and a `message` (string). The example output in the testing section below reflects this structure.
 
 ## Project Setup
 
@@ -110,31 +110,11 @@ curl -X POST "http://localhost:8000/llm-complete" \
 ```json
 {
   "status": "success",
-  "data": [
-    {
-      "id": 1,
-      "First Name": "Alice",
-      "Last Name": "Smith",
-      "Major": "Computer Science",
-      "Enrollment Date": "2022-09-01",
-      "EngineeringClassification": "Engineer"
-    },
-    {
-      "id": 2,
-      "First Name": "Bob",
-      "Last Name": "Johnson",
-      "Major": "Literature",
-      "Enrollment Date": "2023-01-15",
-      "EngineeringClassification": "Non-Engineer"
-    },
-    {
-      "id": 3,
-      "First Name": "Charlie",
-      "Last Name": "Brown",
-      "Major": "Electrical Engineering",
-      "Enrollment Date": "2022-09-01",
-      "EngineeringClassification": "Engineer"
-    }
+  "new_column_name": "Engineering Classification",
+  "column_values": [
+    "Engineer",
+    "Non-Engineer",
+    "Engineer"
   ],
   "message": "LLM completions processed."
 }
