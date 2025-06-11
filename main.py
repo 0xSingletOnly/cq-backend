@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Union
 
 import openai
 from fastapi import FastAPI, HTTPException, status, Response
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from dotenv import load_dotenv
@@ -23,9 +24,10 @@ class LLMCompletionRequest(BaseModel):
     prompt_template: str = Field(..., description="f-string like template for LLM prompt, e.g., 'Classify: {major_value}'.")
     new_column_name: str = Field(..., description="Name of the new column for LLM's completion.")
 
-class LLMCompletionResponse(BaseModel):
+class FrontendLLMResponse(BaseModel):
     status: str = Field(..., description="'success' or 'error'.")
-    data: List[Dict[str, Any]] = Field(..., description="Original table_data with the new column added.")
+    new_column_name: str = Field(..., description="Name of the new column for LLM's completion.")
+    column_values: List[Any] = Field(..., description="Array of values for the new column, matching input row order.")
     message: str = Field(..., description="Descriptive message about the operation's outcome.")
 
 # --- FastAPI App Initialization ---
@@ -33,6 +35,16 @@ app = FastAPI(
     title="Spreadsheet LLM Completion Service",
     description="An API service to perform LLM-powered data completions on tabular data.",
     version="1.0.0"
+)
+
+# --- CORS Middleware --- 
+# Allow all origins, methods, and headers for development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allows all headers
 )
 
 # --- OpenAI Client Initialization ---
@@ -115,16 +127,21 @@ async def process_row(
     return updated_row
 
 # --- API Endpoint ---
-@app.post("/llm-complete", response_model=LLMCompletionResponse)
+@app.post("/llm-complete", response_model=FrontendLLMResponse)
 async def llm_complete_endpoint(request: LLMCompletionRequest, http_response: Response):
+    display_column_name = request.new_column_name
+    if request.new_column_name == "EngineeringClassification":
+        display_column_name = "Engineering Classification"
     openai_api_key = os.getenv("OPENAI_API_KEY")
     if not openai_api_key:
         logger.error("OPENAI_API_KEY environment variable not set.")
         http_response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return LLMCompletionResponse(
-            status="error", 
-            data=request.table_data, 
-            message="Server configuration error: Missing OpenAI API key."
+        error_message = "Server configuration error: Missing OpenAI API key."
+        return FrontendLLMResponse(
+            status="error",
+            new_column_name=display_column_name,
+            column_values=[f"Error: {error_message}" for _ in request.table_data],
+            message=error_message
         )
     
     try:
@@ -133,10 +150,12 @@ async def llm_complete_endpoint(request: LLMCompletionRequest, http_response: Re
     except Exception as e:
         logger.exception("Failed to initialize OpenAI client")
         http_response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return LLMCompletionResponse(
-            status="error", 
-            data=request.table_data, 
-            message=f"Server configuration error: Could not initialize OpenAI client - {type(e).__name__}."
+        client_init_error_message = f"Server configuration error: Could not initialize OpenAI client - {type(e).__name__}."
+        return FrontendLLMResponse(
+            status="error",
+            new_column_name=display_column_name,
+            column_values=[f"Error: {client_init_error_message}" for _ in request.table_data],
+            message=client_init_error_message
         )
 
     tasks = [
@@ -154,10 +173,12 @@ async def llm_complete_endpoint(request: LLMCompletionRequest, http_response: Re
         if isinstance(res_item, openai.AuthenticationError):
             logger.error("OpenAI Authentication Failed during batch processing. Check API Key.")
             http_response.status_code = status.HTTP_401_UNAUTHORIZED # Or 500 as per spec "fail the entire request"
-            return LLMCompletionResponse(
-                status="error", 
-                data=request.table_data, # Return original data
-                message="OpenAI Authentication Failed. Please check your API key and ensure it's valid and has funds."
+            auth_error_message = "OpenAI Authentication Failed. Please check your API key and ensure it's valid and has funds."
+            return FrontendLLMResponse(
+                status="error",
+                new_column_name=display_column_name,
+                column_values=[f"Error: {auth_error_message}" for _ in request.table_data],
+                message=auth_error_message
             )
 
     # If no AuthenticationError, process other results
@@ -176,9 +197,11 @@ async def llm_complete_endpoint(request: LLMCompletionRequest, http_response: Re
             temp_row[request.new_column_name] = "LLM_ERROR_UNKNOWN_PROCESS_ROW_OUTPUT"
             final_processed_data.append(temp_row)
             
-    return LLMCompletionResponse(
-        status="success", 
-        data=final_processed_data, 
+    column_values = [row.get(request.new_column_name, f"Error: Value for '{request.new_column_name}' not found in processed row {idx+1}") for idx, row in enumerate(final_processed_data)]
+    return FrontendLLMResponse(
+        status="success",
+        new_column_name=display_column_name,
+        column_values=column_values,
         message="LLM completions processed."
     )
 
